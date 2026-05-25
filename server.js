@@ -92,6 +92,12 @@ function processQueue(guildId) {
 
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
+bot.on('warn', (info) => console.log(`[Bot] Warn: ${info}`));
+bot.on('error', (err) => console.log(`[Bot] Error: ${err.message}`));
+bot.on('shardDisconnect', (e, id) => console.log(`[Bot] Shard ${id} disconnect`));
+bot.on('shardReconnecting', (id) => console.log(`[Bot] Shard ${id} reconnecting`));
+bot.on('shardResume', (id) => console.log(`[Bot] Shard ${id} resumed`));
+
 bot.once('clientReady', async () => {
   console.log(`[Bot] Connecté : ${bot.user.tag}`);
   await registerCommands();
