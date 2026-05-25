@@ -213,7 +213,7 @@ async function registerCommands() {
   } catch(e) { console.error('[Bot] Erreur commande:', e.message); }
 }
 
-bot.login(TOKEN);
+bot.login(TOKEN).catch(e => console.error('[Bot] Login failed:', e.message));
 server.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
 
 // Keep-alive : évite que Railway mette le serveur en veille
