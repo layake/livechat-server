@@ -99,6 +99,13 @@ bot.once('clientReady', async () => {
 bot.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'livechat') return;
   try {
+    // Vérif âge de l'interaction — Discord expire après 3s
+    const age = Date.now() - interaction.createdTimestamp;
+    if (age > 2500) {
+      console.log(`[Interaction] Trop vieille (${age}ms), ignorée`);
+      return;
+    }
+
     // DEFER EN PREMIER — évite le timeout Discord de 3s
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
