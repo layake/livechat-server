@@ -99,6 +99,8 @@ bot.on('shardReconnecting', (id) => console.log(`[Bot] Shard ${id} reconnecting`
 bot.on('shardResume', (id) => console.log(`[Bot] Shard ${id} resumed`));
 
 bot.once('clientReady', async () => {
+  const { version } = require('discord.js');
+  console.log(`[Bot] discord.js version: ${version}`);
   console.log(`[Bot] Connecté : ${bot.user.tag}`);
   await registerCommands();
 });
