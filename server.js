@@ -101,6 +101,7 @@ bot.on('interactionCreate', async (interaction) => {
   try {
     // Vérif âge de l'interaction — Discord expire après 3s
     const age = Date.now() - interaction.createdTimestamp;
+    console.log(`[Interaction] Age: ${age}ms`);
     if (age > 2500) {
       console.log(`[Interaction] Trop vieille (${age}ms), ignorée`);
       return;
