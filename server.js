@@ -52,6 +52,9 @@ wss.on('connection', (ws) => {
         clients.get(guildId).add(ws);
         ws.send(JSON.stringify({ type: 'registered' }));
         console.log(`[WS] +1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
+      } else if (msg.type === 'done' && guildId) {
+        // Un client signale que le média est terminé — dépiler immédiatement
+        finishMedia(guildId);
       }
     } catch {}
   });
@@ -77,17 +80,28 @@ const queues = new Map();
 const processing = new Set();
 const handledInteractions = new Set(); // évite le double traitement
 
+const mediaTimers = new Map();
+
+function finishMedia(guildId) {
+  if (!processing.has(guildId)) return;
+  const timer = mediaTimers.get(guildId);
+  if (timer) { clearTimeout(timer); mediaTimers.delete(guildId); }
+  const queue = queues.get(guildId);
+  if (queue) queue.shift();
+  processing.delete(guildId);
+  console.log(`[Queue] Média terminé pour guild ${guildId}`);
+  if (queues.get(guildId)?.length > 0) processQueue(guildId);
+}
+
 function processQueue(guildId) {
   if (processing.has(guildId)) return;
   const queue = queues.get(guildId);
   if (!queue || queue.length === 0) return;
   processing.add(guildId);
   broadcast(guildId, { ...queue[0], action: 'show' });
-  setTimeout(() => {
-    queue.shift();
-    processing.delete(guildId);
-    if (queue.length > 0) processQueue(guildId);
-  }, 35000);
+  // Fallback : dépile après 35s si le client n'envoie pas "done"
+  const timer = setTimeout(() => finishMedia(guildId), 35000);
+  mediaTimers.set(guildId, timer);
 }
 
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
