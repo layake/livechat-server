@@ -117,7 +117,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     // DEFER EN PREMIER — évite le timeout Discord de 3s
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply();
 
     // Vérif rôle
     const hasRole = interaction.member.roles.cache.some(r => r.name === ROLE_NAME);
