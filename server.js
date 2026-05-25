@@ -75,6 +75,7 @@ function broadcast(guildId, payload) {
 
 const queues = new Map();
 const processing = new Set();
+const handledInteractions = new Set(); // évite le double traitement
 
 function processQueue(guildId) {
   if (processing.has(guildId)) return;
@@ -99,6 +100,14 @@ bot.once('clientReady', async () => {
 bot.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'livechat') return;
   try {
+    // Dédoublonnage — Discord peut envoyer l'interaction 2 fois
+    if (handledInteractions.has(interaction.id)) {
+      console.log(`[Interaction] Doublon ignoré: ${interaction.id}`);
+      return;
+    }
+    handledInteractions.add(interaction.id);
+    setTimeout(() => handledInteractions.delete(interaction.id), 10000);
+
     // Vérif âge de l'interaction — Discord expire après 3s
     const age = Date.now() - interaction.createdTimestamp;
     console.log(`[Interaction] Age: ${age}ms`);
