@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { WebSocketServer } = require('ws');
 const express = require('express');
 const http = require('http');
@@ -100,7 +100,7 @@ bot.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'livechat') return;
   try {
     // DEFER EN PREMIER — évite le timeout Discord de 3s
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     // Vérif rôle
     const hasRole = interaction.member.roles.cache.some(r => r.name === ROLE_NAME);
