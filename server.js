@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { WebSocketServer } = require('ws');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const express = require('express');
-const http = require('http');
 const https = require('https');
 
 const fileCache = new Map();
@@ -25,11 +25,15 @@ const ROLE_NAME = 'Tars';
 if (!TOKEN || !CLIENT_ID) { console.error('Manque DISCORD_TOKEN ou CLIENT_ID'); process.exit(1); }
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*' },
+  pingInterval: 10000,
+  pingTimeout: 5000,
+});
 
 app.get('/', (req, res) => res.send('LiveChat Server OK'));
-app.get('/health', (req, res) => res.json({ status: 'ok', clients: getTotalClients() }));
+app.get('/health', (req, res) => res.json({ status: 'ok', clients: io.engine.clientsCount }));
 app.get('/media/:id', (req, res) => {
   const cached = fileCache.get(req.params.id);
   if (!cached) { res.status(404).send('Not found'); return; }
@@ -38,66 +42,38 @@ app.get('/media/:id', (req, res) => {
   res.send(cached.buffer);
 });
 
-const clients = new Map();
-function getTotalClients() { let n = 0; for (const s of clients.values()) n += s.size; return n; }
-
-// Ping natif WebSocket toutes les 25s pour détecter les clients morts
-const PING_INTERVAL = 25000;
-
-setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) {
-      ws.terminate();
-      return;
-    }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, PING_INTERVAL);
-
-wss.on('connection', (ws) => {
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
-
+// Socket.io — gestion des rooms par guildId
+io.on('connection', (socket) => {
   let guildId = null;
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type === 'register' && msg.guildId) {
-        guildId = msg.guildId;
-        if (!clients.has(guildId)) clients.set(guildId, new Set());
-        clients.get(guildId).add(ws);
-        ws.send(JSON.stringify({ type: 'registered' }));
-        console.log(`[WS] +1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
-      } else if (msg.type === 'done' && guildId) {
-        finishMedia(guildId);
-      }
-    } catch {}
+
+  socket.on('register', (data) => {
+    guildId = data.guildId;
+    socket.join(guildId);
+    console.log(`[IO] Client connecté guild ${guildId} (total room: ${io.sockets.adapter.rooms.get(guildId)?.size || 0})`);
+    socket.emit('registered');
   });
-  ws.on('close', () => {
-    if (guildId && clients.has(guildId)) {
-      clients.get(guildId).delete(ws);
-      console.log(`[WS] -1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
-      if (clients.get(guildId).size === 0) clients.delete(guildId);
+
+  socket.on('done', () => {
+    if (guildId) finishMedia(guildId);
+  });
+
+  socket.on('disconnect', (reason) => {
+    if (guildId) {
+      const size = io.sockets.adapter.rooms.get(guildId)?.size || 0;
+      console.log(`[IO] Client déconnecté guild ${guildId} (total room: ${size}) — ${reason}`);
     }
   });
-  ws.on('error', () => {});
 });
 
-function broadcast(guildId, payload) {
-  const guild = clients.get(guildId);
-  if (!guild || guild.size === 0) return 0;
-  const data = JSON.stringify(payload);
-  let sent = 0;
-  for (const ws of guild) { if (ws.readyState === ws.OPEN) { ws.send(data); sent++; } }
-  return sent;
-}
-
+// File d'attente
 const queues = new Map();
 const processing = new Set();
-const handledInteractions = new Set(); // évite le double traitement
-
 const mediaTimers = new Map();
+const handledInteractions = new Set();
+
+function getRoomSize(guildId) {
+  return io.sockets.adapter.rooms.get(guildId)?.size || 0;
+}
 
 function finishMedia(guildId) {
   if (!processing.has(guildId)) return;
@@ -106,7 +82,7 @@ function finishMedia(guildId) {
   const queue = queues.get(guildId);
   if (queue) queue.shift();
   processing.delete(guildId);
-  console.log(`[Queue] Média terminé pour guild ${guildId}`);
+  console.log(`[Queue] Média terminé guild ${guildId}`);
   if (queues.get(guildId)?.length > 0) processQueue(guildId);
 }
 
@@ -115,23 +91,18 @@ function processQueue(guildId) {
   const queue = queues.get(guildId);
   if (!queue || queue.length === 0) return;
   processing.add(guildId);
-  broadcast(guildId, { ...queue[0], action: 'show' });
-  // Fallback : dépile après 35s si le client n'envoie pas "done"
+  io.to(guildId).emit('show-media', { ...queue[0], action: 'show' });
   const timer = setTimeout(() => finishMedia(guildId), 35000);
   mediaTimers.set(guildId, timer);
 }
 
+// Bot Discord
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 bot.on('warn', (info) => console.log(`[Bot] Warn: ${info}`));
 bot.on('error', (err) => console.log(`[Bot] Error: ${err.message}`));
-bot.on('shardDisconnect', (e, id) => console.log(`[Bot] Shard ${id} disconnect`));
-bot.on('shardReconnecting', (id) => console.log(`[Bot] Shard ${id} reconnecting`));
-bot.on('shardResume', (id) => console.log(`[Bot] Shard ${id} resumed`));
 
 bot.once('clientReady', async () => {
-  const { version } = require('discord.js');
-  console.log(`[Bot] discord.js version: ${version}`);
   console.log(`[Bot] Connecté : ${bot.user.tag}`);
   await registerCommands();
 });
@@ -139,26 +110,12 @@ bot.once('clientReady', async () => {
 bot.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'livechat') return;
   try {
-    // Dédoublonnage — Discord peut envoyer l'interaction 2 fois
-    if (handledInteractions.has(interaction.id)) {
-      console.log(`[Interaction] Doublon ignoré: ${interaction.id}`);
-      return;
-    }
+    if (handledInteractions.has(interaction.id)) return;
     handledInteractions.add(interaction.id);
     setTimeout(() => handledInteractions.delete(interaction.id), 10000);
 
-    // Vérif âge de l'interaction — Discord expire après 3s
-    const age = Date.now() - interaction.createdTimestamp;
-    console.log(`[Interaction] Age: ${age}ms`);
-    if (age > 2500) {
-      console.log(`[Interaction] Trop vieille (${age}ms), ignorée`);
-      return;
-    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    // DEFER EN PREMIER — évite le timeout Discord de 3s
-    await interaction.deferReply();
-
-    // Vérif rôle
     const hasRole = interaction.member.roles.cache.some(r => r.name === ROLE_NAME);
     if (!hasRole) {
       await interaction.editReply({ content: `❌ Tu dois avoir le rôle **${ROLE_NAME}**.` });
@@ -167,7 +124,6 @@ bot.on('interactionCreate', async (interaction) => {
 
     const guildId = interaction.guildId;
 
-    // Vérif média en cours
     if (processing.has(guildId)) {
       await interaction.editReply({ content: '⏳ Un média est déjà en cours, attends qu\'il soit terminé !' });
       return;
@@ -175,7 +131,6 @@ bot.on('interactionCreate', async (interaction) => {
 
     if (!queues.has(guildId)) queues.set(guildId, []);
     const queue = queues.get(guildId);
-
     if (queue.length >= 3) {
       await interaction.editReply({ content: '⏳ File d\'attente pleine (3/3).' });
       return;
@@ -214,16 +169,15 @@ bot.on('interactionCreate', async (interaction) => {
       }
     }
 
-    const connected = clients.get(guildId)?.size || 0;
+    const connected = getRoomSize(guildId);
     const payload = {
-      type: 'media',
       username: interaction.member.displayName || interaction.user.username,
       avatar: interaction.user.displayAvatarURL({ size: 64 }),
       text, url, mediaType,
     };
 
     queue.push(payload);
-    processQueue(guildId);
+    setTimeout(() => processQueue(guildId), 1500);
 
     await interaction.editReply({ content: `✅ Envoyé à **${connected}** écran${connected !== 1 ? 's' : ''} !` });
   } catch(e) {
@@ -245,9 +199,9 @@ async function registerCommands() {
 }
 
 bot.login(TOKEN).catch(e => console.error('[Bot] Login failed:', e.message));
-server.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
+httpServer.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
 
-// Keep-alive : évite que Railway mette le serveur en veille
+// Keep-alive
 setInterval(() => {
   const host = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
