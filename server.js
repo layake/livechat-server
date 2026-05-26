@@ -52,6 +52,8 @@ wss.on('connection', (ws) => {
         clients.get(guildId).add(ws);
         ws.send(JSON.stringify({ type: 'registered' }));
         console.log(`[WS] +1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
+      } else if (msg.type === 'ping') {
+        // keep-alive, rien à faire
       } else if (msg.type === 'done' && guildId) {
         // Un client signale que le média est terminé — dépiler immédiatement
         finishMedia(guildId);
