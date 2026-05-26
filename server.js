@@ -41,7 +41,24 @@ app.get('/media/:id', (req, res) => {
 const clients = new Map();
 function getTotalClients() { let n = 0; for (const s of clients.values()) n += s.size; return n; }
 
+// Ping natif WebSocket toutes les 25s pour détecter les clients morts
+const PING_INTERVAL = 25000;
+
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      return;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, PING_INTERVAL);
+
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   let guildId = null;
   ws.on('message', (data) => {
     try {
@@ -52,10 +69,7 @@ wss.on('connection', (ws) => {
         clients.get(guildId).add(ws);
         ws.send(JSON.stringify({ type: 'registered' }));
         console.log(`[WS] +1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
-      } else if (msg.type === 'ping') {
-        // keep-alive, rien à faire
       } else if (msg.type === 'done' && guildId) {
-        // Un client signale que le média est terminé — dépiler immédiatement
         finishMedia(guildId);
       }
     } catch {}
@@ -63,6 +77,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     if (guildId && clients.has(guildId)) {
       clients.get(guildId).delete(ws);
+      console.log(`[WS] -1 client guild ${guildId} (total: ${clients.get(guildId).size})`);
       if (clients.get(guildId).size === 0) clients.delete(guildId);
     }
   });
