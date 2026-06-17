@@ -42,14 +42,14 @@ app.get('/media/:id', (req, res) => {
   res.send(cached.buffer);
 });
 
-// Socket.io — gestion des rooms par guildId
 io.on('connection', (socket) => {
   let guildId = null;
 
   socket.on('register', (data) => {
     guildId = data.guildId;
     socket.join(guildId);
-    console.log(`[IO] Client connecté guild ${guildId} (total room: ${io.sockets.adapter.rooms.get(guildId)?.size || 0})`);
+    const size = io.sockets.adapter.rooms.get(guildId)?.size || 0;
+    console.log(`[IO] Client connecté guild ${guildId} (total room: ${size})`);
     socket.emit('registered');
   });
 
@@ -65,7 +65,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// File d'attente
 const queues = new Map();
 const processing = new Set();
 const mediaTimers = new Map();
@@ -96,7 +95,6 @@ function processQueue(guildId) {
   mediaTimers.set(guildId, timer);
 }
 
-// Bot Discord
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 bot.on('warn', (info) => console.log(`[Bot] Warn: ${info}`));
@@ -108,7 +106,32 @@ bot.once('clientReady', async () => {
 });
 
 bot.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand() || interaction.commandName !== 'livechat') return;
+  if (!interaction.isChatInputCommand()) return;
+
+  // Commande /stop
+  if (interaction.commandName === 'stop') {
+    try {
+      const hasRole = interaction.member.roles.cache.some(r => r.name === ROLE_NAME);
+      if (!hasRole) {
+        await interaction.reply({ content: `❌ Tu dois avoir le rôle **${ROLE_NAME}**.`, ephemeral: true });
+        return;
+      }
+      const guildId = interaction.guildId;
+      if (processing.has(guildId)) {
+        io.to(guildId).emit('stop-media');
+        finishMedia(guildId);
+        await interaction.reply({ content: '⏹️ Média arrêté !', ephemeral: true });
+      } else {
+        await interaction.reply({ content: '❌ Aucun média en cours.', ephemeral: true });
+      }
+    } catch(e) {
+      console.error('[Stop] Erreur:', e.message);
+    }
+    return;
+  }
+
+  if (interaction.commandName !== 'livechat') return;
+
   try {
     if (handledInteractions.has(interaction.id)) return;
     handledInteractions.add(interaction.id);
@@ -186,22 +209,34 @@ bot.on('interactionCreate', async (interaction) => {
 });
 
 async function registerCommands() {
-  const cmd = new SlashCommandBuilder()
+  const livechat = new SlashCommandBuilder()
     .setName('livechat')
     .setDescription('Affiche un média sur tous les écrans connectés')
     .addStringOption(o => o.setName('texte').setDescription('Message à afficher').setRequired(false))
     .addAttachmentOption(o => o.setName('media').setDescription('Image, GIF ou vidéo').setRequired(false));
+
+  const stop = new SlashCommandBuilder()
+    .setName('stop')
+    .setDescription('Annule le média en cours d\'affichage');
+
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [cmd.toJSON()] });
-    console.log('[Bot] Commande /livechat enregistrée globalement');
+    // Nettoyer les commandes guild (supprime les doublons)
+    const guilds = bot.guilds.cache;
+    for (const [, guild] of guilds) {
+      try {
+        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guild.id), { body: [] });
+        console.log(`[Bot] Commandes guild supprimées pour ${guild.name}`);
+      } catch {}
+    }
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [livechat.toJSON(), stop.toJSON()] });
+    console.log('[Bot] Commandes /livechat et /stop enregistrées globalement');
   } catch(e) { console.error('[Bot] Erreur commande:', e.message); }
 }
 
 bot.login(TOKEN).catch(e => console.error('[Bot] Login failed:', e.message));
 httpServer.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
 
-// Keep-alive
 setInterval(() => {
   const host = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
