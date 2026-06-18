@@ -182,9 +182,7 @@ bot.on('interactionCreate', async (interaction) => {
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
         fileCache.set(id, { buffer, contentType: contentType || ct });
         setTimeout(() => fileCache.delete(id), 60000);
-        const host = process.env.RAILWAY_PUBLIC_DOMAIN
-          ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-          : `http://localhost:${PORT}`;
+        const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
         url = `${host}/media/${id}`;
       } catch(e) {
         url = attachment.url;
@@ -221,7 +219,6 @@ async function registerCommands() {
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    // Nettoyer les commandes guild (supprime les doublons)
     const guilds = bot.guilds.cache;
     for (const [, guild] of guilds) {
       try {
@@ -238,8 +235,6 @@ bot.login(TOKEN).catch(e => console.error('[Bot] Login failed:', e.message));
 httpServer.listen(PORT, () => console.log(`[Server] Port ${PORT}`));
 
 setInterval(() => {
-  const host = process.env.RAILWAY_PUBLIC_DOMAIN
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : `http://localhost:${PORT}`;
+  const host = process.env.SERVER_URL || `http://localhost:${PORT}`;
   https.get(`${host}/health`, () => {}).on('error', () => {});
 }, 4 * 60 * 1000);
